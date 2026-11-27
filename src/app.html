@@ -53,6 +53,7 @@
   <p>올해와 전년 엑셀을 올리면 설비별로 취합·비교한 결과 엑셀을 만듭니다. 파일은 이 PC 안에서만 처리되고 밖으로 보내지 않습니다.</p>
 </header>
 <main>
+<div class="msg hidden" id="notice" role="alert"></div>
 
 <section>
   <h2><span class="step">1</span>엑셀 2개 올리기</h2>
@@ -114,6 +115,9 @@
   var sheetFix = {};    // 'year|size' -> {sheet, cell} 사용자가 알려준 값, 또는 {none:true}
   var cells = [];       // {id, year, size, sheet, row, raw, text, status:'ok'|'bad'|'excluded', items, why}
   var answers = loadAnswers();
+  var dl = null;
+  if (window.claude && window.claude.use) window.claude.use('downloads').then(function (d) { dl = d; }, function () {});
+  function note(t) { var n = $('notice'); n.textContent = t; n.classList.toggle('hidden', !t); if (t) n.scrollIntoView({ block: 'nearest' }); }
 
   function loadAnswers() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } }
   function saveAnswers() { try { localStorage.setItem(STORE, JSON.stringify(answers)); } catch (e) {} }
@@ -145,7 +149,7 @@
       sheetFix = {};
       load();
     }).catch(function (e) {
-      alert('엑셀을 읽지 못했습니다: ' + e.message);
+      note('엑셀을 읽지 못했습니다: ' + e.message);
     }).then(function () { $('btn-start').disabled = false; });
   });
 
@@ -217,7 +221,7 @@
         var bs2 = tr.querySelectorAll('button');
         bs2[0].onclick = function () {
           var v = tr.querySelector('input').value.trim();
-          if (!/^[A-Za-z]{1,3}[1-9][0-9]*$/.test(v)) { alert('칸 위치를 C3 처럼 적어주세요.'); return; }
+          if (!/^[A-Za-z]{1,3}[1-9][0-9]*$/.test(v)) { note('칸 위치를 C3 처럼 적어주세요.'); return; }
           sheetFix[a.year + '|' + a.size] = { sheet: a.sheet, cell: v }; load();
         };
         bs2[1].onclick = function () { sheetFix[a.year + '|' + a.size] = { none: true }; load(); };
@@ -336,9 +340,19 @@
     var d = new Date();
     var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
     var data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    var url = URL.createObjectURL(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    var fname = '중단시간_설비별비교_' + stamp + '.xlsx';
+    var blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    if (dl) {
+      // Claude 페이지 안에서는 downloads 기능으로 저장
+      dl.save({ filename: fname, data: blob }).then(function () { note(''); }, function (err) {
+        if (err && err.code === 'declined') return;
+        note('결과 엑셀을 저장하지 못했습니다' + (err && err.message ? ': ' + err.message : ''));
+      });
+      return;
+    }
+    var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    a.href = url; a.download = '중단시간_설비별비교_' + stamp + '.xlsx';
+    a.href = url; a.download = fname;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   });
