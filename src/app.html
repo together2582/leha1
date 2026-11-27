@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>중단시간 분석 도구</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --line:#d9dce1; --muted:#5f6670; --accent:#1f5fbf; --warn:#b54708; --bad:#b42318; --ok:#067647; --bg:#f6f7f9; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif; color:#1d2129; background:var(--bg); font-size:14px; line-height:1.5; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:16px 24px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  main { max-width:1180px; margin:0 auto; padding:20px 24px 60px; }
+  section { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin-bottom:16px; }
+  section h2 { margin:0 0 12px; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .step { display:inline-flex; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:12px; align-items:center; justify-content:center; }
+  .files { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .drop { border:2px dashed var(--line); border-radius:8px; padding:14px; }
+  .drop.has { border-color:var(--ok); border-style:solid; }
+  .drop b { display:block; margin-bottom:6px; }
+  .fname { color:var(--muted); font-size:13px; margin-top:6px; word-break:break-all; }
+  button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+  th { background:#f0f2f5; font-weight:600; white-space:nowrap; }
+  td.n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  tr.etc td { background:#fafafa; }
+  tr.sum td { background:#eef3fb; font-weight:700; }
+  .muted { color:var(--muted); }
+  .badge { display:inline-block; padding:0 8px; border-radius:10px; font-size:12px; font-weight:600; }
+  .badge.warn { background:#fef0c7; color:var(--warn); }
+  .badge.ok { background:#dcfae6; color:var(--ok); }
+  .why { color:var(--bad); font-size:12px; }
+  input[type=text], select { font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:4px; }
+  input.fix { width:100%; min-width:260px; }
+  .actions { white-space:nowrap; }
+  .actions button { padding:3px 10px; margin-left:4px; }
+  .tabs { display:flex; gap:24px; flex-wrap:wrap; }
+  .tabs > div { flex:1 1 520px; }
+  .tabs h3 { font-size:15px; margin:4px 0 8px; }
+  .msg { padding:10px 12px; border-radius:6px; background:#fef3f2; color:var(--bad); margin-bottom:10px; }
+  .done { padding:10px 12px; border-radius:6px; background:#ecfdf3; color:var(--ok); }
+  .hidden { display:none; }
+  .ask td { vertical-align:middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>중단시간 분석 도구</h1>
+  <p>올해와 전년 엑셀을 올리면 설비별로 취합·비교한 결과 엑셀을 만듭니다. 파일은 이 PC 안에서만 처리되고 밖으로 보내지 않습니다.</p>
+</header>
+<main>
+
+<section>
+  <h2><span class="step">1</span>엑셀 2개 올리기</h2>
+  <div class="files">
+    <div class="drop" id="drop-cur"><b>올해 엑셀</b><input type="file" id="file-cur" accept=".xlsx,.xls,.xlsm"><div class="fname" id="name-cur"></div></div>
+    <div class="drop" id="drop-prev"><b>전년 엑셀</b><input type="file" id="file-prev" accept=".xlsx,.xls,.xlsm"><div class="fname" id="name-prev"></div></div>
+  </div>
+  <p class="muted">파일마다 <b>소형</b>, <b>대형</b> 시트의 <b>중단사유</b> 제목 칸 아래를 읽습니다. 칸 형식: <code>사유(분), 사유(분)</code></p>
+  <button class="primary" id="btn-start" disabled>분석 시작</button>
+</section>
+
+<section id="sec-sheet" class="hidden">
+  <h2><span class="step">!</span>시트·제목 확인 <span class="badge warn" id="sheet-count"></span></h2>
+  <p class="muted">아래 시트나 <code>중단사유</code> 제목을 찾지 못했습니다. 알려주시면 이어서 읽습니다.</p>
+  <table><thead><tr><th>파일</th><th>찾는 것</th><th>알려주세요</th><th></th></tr></thead><tbody id="sheet-body"></tbody></table>
+</section>
+
+<section id="sec-check" class="hidden">
+  <h2><span class="step">2</span>되묻기와 오류 확인</h2>
+  <div id="check-status"></div>
+
+  <div id="ask-wrap" class="hidden">
+    <h3>분류를 알려주세요 <span class="badge warn" id="ask-count"></span></h3>
+    <p class="muted">단어표로 분류를 정할 수 없는 사유입니다. 답은 이 PC에 저장되어 다음부터 다시 묻지 않습니다.</p>
+    <table class="ask"><thead><tr><th>시트</th><th>사유</th><th>나온 곳</th><th>분류</th></tr></thead><tbody id="ask-body"></tbody></table>
+  </div>
+
+  <div id="bad-wrap" class="hidden" style="margin-top:16px">
+    <h3>확인 목록 <span class="badge warn" id="bad-count"></span></h3>
+    <p class="muted">형식이 맞지 않아 계산에서 빠진 칸입니다. 고쳐서 <b>고치기</b>를 누르거나 <b>제외</b>하세요. 모두 처리해야 결과 엑셀을 만들 수 있습니다.</p>
+    <table><thead><tr><th>파일</th><th>시트</th><th>행</th><th>원문 / 고칠 내용</th><th></th></tr></thead><tbody id="bad-body"></tbody></table>
+  </div>
+</section>
+
+<section id="sec-result" class="hidden">
+  <h2><span class="step">3</span>결과 엑셀 받기</h2>
+  <p><button class="primary" id="btn-download" disabled>결과 엑셀 받기</button> <span class="muted" id="dl-note"></span></p>
+  <div class="tabs" id="preview"></div>
+</section>
+
+</main>
+
+<script>
+/*__XLSX__*/
+</script>
+<script>
+/*__LOGIC__*/
+</script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var YEARS = ['올해', '전년'];
+  var SIZES = ['소형', '대형'];
+  var COLS = ['설비', '올해(분)', '올해 구성비', '전년(분)', '전년 구성비', '증감(분)', '증감률', '주요 사유'];
+  var STORE = 'downtime-tool-answers-v1';
+
+  var files = { '올해': null, '전년': null };
+  var books = {};       // year -> workbook
+  var sheetFix = {};    // 'year|size' -> {sheet, cell} 사용자가 알려준 값, 또는 {none:true}
+  var cells = [];       // {id, year, size, sheet, row, raw, text, status:'ok'|'bad'|'excluded', items, why}
+  var answers = loadAnswers();
+
+  function loadAnswers() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } }
+  function saveAnswers() { try { localStorage.setItem(STORE, JSON.stringify(answers)); } catch (e) {} }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // ----- 1. 파일 올리기 -----
+  [['올해', 'cur'], ['전년', 'prev']].forEach(function (p) {
+    $('file-' + p[1]).addEventListener('change', function (e) {
+      files[p[0]] = e.target.files[0] || null;
+      $('name-' + p[1]).textContent = files[p[0]] ? files[p[0]].name : '';
+      $('drop-' + p[1]).classList.toggle('has', !!files[p[0]]);
+      $('btn-start').disabled = !(files['올해'] && files['전년']);
+    });
+  });
+
+  function readFile(f) {
+    return new Promise(function (res, rej) {
+      var r = new FileReader();
+      r.onload = function () { try { res(XLSX.read(new Uint8Array(r.result), { type: 'array' })); } catch (e) { rej(e); } };
+      r.onerror = function () { rej(r.error); };
+      r.readAsArrayBuffer(f);
+    });
+  }
+
+  $('btn-start').addEventListener('click', function () {
+    $('btn-start').disabled = true;
+    Promise.all(YEARS.map(function (y) { return readFile(files[y]); })).then(function (bs) {
+      books = { '올해': bs[0], '전년': bs[1] };
+      sheetFix = {};
+      load();
+    }).catch(function (e) {
+      alert('엑셀을 읽지 못했습니다: ' + e.message);
+    }).then(function () { $('btn-start').disabled = false; });
+  });
+
+  // ----- 시트 찾기 -----
+  function gridOf(ws) { return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: null, blankrows: true }); }
+  function findSheetName(wb, size) {
+    for (var i = 0; i < wb.SheetNames.length; i++) if (wb.SheetNames[i].trim() === size) return wb.SheetNames[i];
+    return null;
+  }
+
+  // 각 파일·시트 읽기. 못 찾은 것은 되묻기 목록으로.
+  function load() {
+    cells = [];
+    var asks = [];
+    var id = 0;
+    YEARS.forEach(function (y) {
+      var wb = books[y];
+      SIZES.forEach(function (size) {
+        var fx = sheetFix[y + '|' + size] || {};
+        if (fx.none) return;
+        var name = fx.sheet || findSheetName(wb, size);
+        if (!name || !wb.Sheets[name]) { asks.push({ year: y, size: size, kind: 'sheet' }); return; }
+        var grid = gridOf(wb.Sheets[name]);
+        var found;
+        if (fx.cell) {
+          var a = XLSX.utils.decode_cell(fx.cell.toUpperCase());
+          found = L.readBelow(grid, [{ r: a.r, c: a.c }]);
+        } else found = L.readSheet(grid);
+        if (!found) { asks.push({ year: y, size: size, kind: 'head', sheet: name }); return; }
+        found.forEach(function (f) {
+          var c = { id: id++, year: y, size: size, sheet: name, row: f.row, raw: f.text, text: f.text };
+          parseInto(c);
+          cells.push(c);
+        });
+      });
+    });
+    renderSheetAsks(asks);
+    render();
+  }
+
+  function parseInto(c) {
+    var p = L.parseCell(c.text);
+    if (p.ok) { c.status = 'ok'; c.items = p.items; c.why = ''; }
+    else { c.status = 'bad'; c.items = []; c.why = p.why; }
+  }
+
+  function renderSheetAsks(asks) {
+    var sec = $('sec-sheet');
+    sec.classList.toggle('hidden', !asks.length);
+    $('sheet-count').textContent = asks.length + '건';
+    var body = $('sheet-body');
+    body.innerHTML = '';
+    asks.forEach(function (a) {
+      var tr = document.createElement('tr');
+      var wb = books[a.year];
+      var fname = files[a.year].name;
+      if (a.kind === 'sheet') {
+        var opts = wb.SheetNames.map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+        tr.innerHTML = '<td>' + a.year + '<div class="muted">' + esc(fname) + '</div></td><td><b>' + a.size + '</b> 시트를 못 찾음</td>' +
+          '<td>' + a.size + ' 자료가 있는 시트: <select>' + opts + '</select></td>' +
+          '<td class="actions"><button class="primary">이 시트로 읽기</button><button>이 파일에 ' + a.size + ' 자료 없음</button></td>';
+        var bs = tr.querySelectorAll('button');
+        bs[0].onclick = function () { sheetFix[a.year + '|' + a.size] = { sheet: tr.querySelector('select').value }; load(); };
+        bs[1].onclick = function () { sheetFix[a.year + '|' + a.size] = { none: true }; load(); };
+      } else {
+        tr.innerHTML = '<td>' + a.year + '<div class="muted">' + esc(fname) + '</div></td><td><b>' + esc(a.sheet) + '</b> 시트에서 <code>중단사유</code> 제목을 못 찾음</td>' +
+          '<td>중단사유 제목 칸 위치(예: C3): <input type="text" size="6"></td>' +
+          '<td class="actions"><button class="primary">이 칸 아래 읽기</button><button>이 시트에 자료 없음</button></td>';
+        var bs2 = tr.querySelectorAll('button');
+        bs2[0].onclick = function () {
+          var v = tr.querySelector('input').value.trim();
+          if (!/^[A-Za-z]{1,3}[1-9][0-9]*$/.test(v)) { alert('칸 위치를 C3 처럼 적어주세요.'); return; }
+          sheetFix[a.year + '|' + a.size] = { sheet: a.sheet, cell: v }; load();
+        };
+        bs2[1].onclick = function () { sheetFix[a.year + '|' + a.size] = { none: true }; load(); };
+      }
+      body.appendChild(tr);
+    });
+  }
+
+  // ----- 2. 분류, 되묻기, 확인 목록 -----
+  function entries() {
+    var out = [], unknown = {};
+    cells.forEach(function (c) {
+      if (c.status !== 'ok') return;
+      c.items.forEach(function (it) {
+        var cat = L.classify(it.reason, c.size, L.DEFAULT_WORDS, answers);
+        if (cat) out.push({ year: c.year, size: c.size, reason: it.reason, min: it.min, cat: cat });
+        else {
+          var k = L.answerKey(it.reason, c.size);
+          if (!unknown[k]) unknown[k] = { key: k, size: c.size, reason: it.reason, where: [] };
+          unknown[k].where.push(c.year + ' ' + c.sheet + ' ' + c.row + '행');
+        }
+      });
+    });
+    return { list: out, unknown: Object.keys(unknown).map(function (k) { return unknown[k]; }) };
+  }
+
+  function render() {
+    var any = cells.length > 0 || Object.keys(books).length > 0;
+    $('sec-check').classList.toggle('hidden', !any);
+    $('sec-result').classList.toggle('hidden', !any);
+    var e = entries();
+    var bad = cells.filter(function (c) { return c.status === 'bad'; });
+    var sheetPending = !$('sec-sheet').classList.contains('hidden');
+
+    // 되묻기
+    $('ask-wrap').classList.toggle('hidden', !e.unknown.length);
+    $('ask-count').textContent = e.unknown.length + '건';
+    var ab = $('ask-body'); ab.innerHTML = '';
+    e.unknown.forEach(function (u) {
+      var opts = '<option value="">선택</option>' + L.EQUIP[u.size].concat([L.ETC]).map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+      var tr = document.createElement('tr');
+      var where = u.where.slice(0, 3).join(', ') + (u.where.length > 3 ? ' 외 ' + (u.where.length - 3) + '곳' : '');
+      tr.innerHTML = '<td>' + u.size + '</td><td>' + esc(u.reason) + '</td><td class="muted">' + esc(where) + '</td><td><select>' + opts + '</select></td>';
+      tr.querySelector('select').onchange = function () {
+        if (!this.value) return;
+        answers[u.key] = this.value; saveAnswers(); render();
+      };
+      ab.appendChild(tr);
+    });
+
+    // 확인 목록
+    $('bad-wrap').classList.toggle('hidden', !bad.length);
+    $('bad-count').textContent = bad.length + '건';
+    var bb = $('bad-body'); bb.innerHTML = '';
+    bad.forEach(function (c) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + c.year + '</td><td>' + esc(c.sheet) + '</td><td class="n">' + c.row + '</td>' +
+        '<td><div class="muted">원문: ' + esc(c.raw) + '</div><input class="fix" type="text"><div class="why">' + esc(c.why) + '</div></td>' +
+        '<td class="actions"><button class="primary">고치기</button><button>제외</button></td>';
+      var inp = tr.querySelector('input'); inp.value = c.text;
+      var bs = tr.querySelectorAll('button');
+      bs[0].onclick = function () { c.text = inp.value; parseInto(c); render(); };
+      bs[1].onclick = function () { c.status = 'excluded'; render(); };
+      inp.onkeydown = function (ev) { if (ev.key === 'Enter') bs[0].onclick(); };
+      bb.appendChild(tr);
+    });
+
+    var left = e.unknown.length + bad.length;
+    var excluded = cells.filter(function (c) { return c.status === 'excluded'; }).length;
+    $('check-status').innerHTML = (sheetPending ? '<div class="msg">위 시트·제목 확인을 먼저 처리해주세요.</div>' : '') +
+      (left ? '<div class="msg">남은 확인 ' + left + '건 (분류 ' + e.unknown.length + ', 형식 ' + bad.length + ')</div>'
+            : '<div class="done">모든 항목을 확인했습니다. 읽은 칸 ' + cells.length + '개' + (excluded ? ', 제외 ' + excluded + '개' : '') + '</div>');
+
+    // 결과 미리보기
+    var html = '';
+    SIZES.forEach(function (size) {
+      var rows = L.compute(e.list, size);
+      html += '<div><h3>' + size + '</h3><table><thead><tr>' + COLS.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>';
+      rows.forEach(function (r) {
+        var cls = r.name === '합계' ? 'sum' : r.name === L.ETC ? 'etc' : '';
+        html += '<tr class="' + cls + '"><td>' + esc(r.name) + '</td><td class="n">' + num(r.cur) + '</td><td class="n">' + pct(r.curPct) + '</td><td class="n">' + num(r.prev) +
+          '</td><td class="n">' + pct(r.prevPct) + '</td><td class="n">' + sign(r.diff) + '</td><td class="n">' + (r.rate == null ? '-' : signPct(r.rate)) + '</td><td>' + esc(r.top) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    });
+    $('preview').innerHTML = html;
+    var ready = !left && !sheetPending;
+    $('btn-download').disabled = !ready;
+    $('dl-note').textContent = ready ? '' : '확인을 모두 마치면 받을 수 있습니다. 아래는 지금까지 정상 항목으로 계산한 값입니다.';
+  }
+
+  function num(v) { return (Math.round(v * 100) / 100).toLocaleString('ko-KR'); }
+  function pct(v) { return (v * 100).toFixed(1) + '%'; }
+  function sign(v) { return (v > 0 ? '+' : '') + num(v); }
+  function signPct(v) { return (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%'; }
+
+  // ----- 3. 결과 엑셀 -----
+  $('btn-download').addEventListener('click', function () {
+    var e = entries();
+    var wb = XLSX.utils.book_new();
+    SIZES.forEach(function (size) {
+      var rows = L.compute(e.list, size);
+      var aoa = [COLS].concat(rows.map(function (r) {
+        return [r.name, r.cur, r.curPct, r.prev, r.prevPct, r.diff, r.rate == null ? '-' : r.rate, r.top];
+      }));
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      for (var i = 1; i < aoa.length; i++) {
+        [[2, '0.0%'], [4, '0.0%'], [5, '+#,##0;-#,##0;0'], [6, '+0.0%;-0.0%;0.0%']].forEach(function (f) {
+          var ref = XLSX.utils.encode_cell({ r: i, c: f[0] });
+          if (ws[ref] && ws[ref].t === 'n') ws[ref].z = f[1];
+        });
+      }
+      ws['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 50 }];
+      XLSX.utils.book_append_sheet(wb, ws, size);
+    });
+    var d = new Date();
+    var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    var data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var url = URL.createObjectURL(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = '중단시간_설비별비교_' + stamp + '.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  });
+})();
+</script>
+</body>
+</html>
